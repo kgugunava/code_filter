@@ -9,6 +9,8 @@ import tree_sitter_javascript as ts_javascript
 import tree_sitter_rust as ts_rust
 import tree_sitter_sql as ts_sql
 
+import json
+
 
 import tree_sitter
 
@@ -55,10 +57,77 @@ class Filter:
     def CreateTree(self, source_code: str) -> None:
         source_code_bytes = bytes(source_code, "utf8")
         self._tree = self._parser.parse(source_code_bytes)
+        self._source_code = source_code_bytes
     
-    def TreeTraversal(self, node: tree_sitter.Node) -> None:
+    def GetFunctionInfo(self, node: tree_sitter.Node) -> dict:
         if node is None:
             return
-        print("Type: ", node.type)
-        for child in node.children:
-            self.TreeTraversal(child)
+        
+        info = {
+            "name": "",
+            "parameters": [{"name": "", "type": "", "default_value": ""}],
+            "return_type": "",
+            "body": ""
+        }
+
+        def _extract_function_parameters(n) -> list:
+            parameters_node = n.child_by_field_name("parameters")
+            if not parameters_node:
+                return []
+            parameters = []
+            for child in parameters_node.children:
+                if child.type in ("(", ")", ","):
+                    continue
+                param = {"name": "", "type": "", "default_value": ""}
+                if child.type == "identifier":
+                    param["name"] = self._source_code[child.start_byte:child.end_byte].decode("utf8")
+                elif child.type == "typed_parameter":
+                    name_node = child.child_by_field_name("name") or child.children[0]
+                    type_node = child.child_by_field_name("type") or child.children[2]
+                    param["name"] = self._source_code[name_node.start_byte:name_node.end_byte].decode("utf8")
+                    param["type"] = self._source_code[type_node.start_byte:type_node.end_byte].decode("utf8")
+                elif child.type == "default_parameter":
+                    name_node = child.child_by_field_name("name") or child.children[0]
+                    default_value_node = child.child_by_field_name("value") or child.children[2]
+                    param["name"] = self._source_code[name_node.start_byte:name_node.end_byte].decode("utf8")
+                    param["default"] = self._source_code[default_value_node.start_byte:default_value_node.end_byte].decode("utf8")
+                elif child.type == "typed_default_parameter":
+                    name_node = child.child_by_field_name("name")
+                    type_node = child.child_by_field_name("type")
+                    default_value_node = child.child_by_field_name("value")
+                    param["name"] = self._source_code[name_node.start_byte:name_node.end_byte].decode("utf8")
+                    param["type"] = self._source_code[type_node.start_byte:type_node.end_byte].decode("utf8")
+                    param["default"] = self._source_code[default_value_node.start_byte:default_value_node.end_byte].decode("utf8")
+                parameters.append(param)
+            return parameters  
+
+        def _traverse(n):
+            text = self._source_code[n.start_byte:n.end_byte].decode("utf8", errors="ignore")
+            if n.type == "function_definition":
+                name_node = n.child_by_field_name("name")
+
+                if name_node:
+                    name = self._source_code[name_node.start_byte:name_node.end_byte].decode("utf8", errors="ignore")
+                    info["name"] = name
+                    info["parameters"] = _extract_function_parameters(n)
+
+                return_type_node = n.child_by_field_name("return_type")
+
+                if return_type_node:
+                    info["return_type"] = self._source_code[return_type_node.start_byte:return_type_node.end_byte].decode("utf8")
+                    
+                body_node = n.child_by_field_name("body")
+
+                if body_node:
+                    info["body"] = self._source_code[body_node.start_byte:body_node.end_byte].decode("utf8")
+
+            for child in n.children:
+                _traverse(child)
+
+        _traverse(node)
+
+        return info
+    
+    def MakeInfoInJSON(self, info: dict, filename: str) -> None:
+        with open(filename, "w", encoding="utf8") as f:
+            json.dump(info, f, ensure_ascii=False, indent=2)
