@@ -31,7 +31,10 @@ class Filter:
             self._parser_language = constants.SQL_LANGUAGE
 
         self._parser = tree_sitter.Parser(self._parser_language)
+
         self.tree = None
+        self.classes_info = None
+        self.functions_info = None
 
     def create_tree(self, source_code: str) -> None:
         source_code_bytes = bytes(source_code, "utf8")
@@ -43,18 +46,30 @@ class Filter:
             return
         
         classes_info: list[models.ClassInfo] = []
+        functions_info: list[models.FunctionInfo] = []
 
-        def _traverse(n):
+        def _get_top_level_classes_info(n):
             if n.type == "class_definition":
                 class_info = self.get_class_info(n)
                 classes_info.append(class_info)
             for child in n.children:
-                _traverse(child)
+                _get_top_level_classes_info(child)
 
-        _traverse(node)
+        def _get_top_level_functions_info(n): # функции, объявленные вне классов
+            if n.type == "class_definition":
+                return
+            if n.type == "function_definition":
+                function_info = self.get_function_info(n)
+                functions_info.append(function_info)
+            for child in n.children:
+                _get_top_level_functions_info(child)       
+
+        _get_top_level_classes_info(node)
+        _get_top_level_functions_info(node)
 
         code_info: models.CodeInfo = {}
         code_info["classes"] = classes_info
+        code_info["functions"] = functions_info
 
         return code_info
         
