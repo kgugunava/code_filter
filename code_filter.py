@@ -1,5 +1,6 @@
 import json
 import tree_sitter
+from tree_sitter_go import language
 import constants
 import models
 
@@ -41,10 +42,124 @@ class Filter:
         self._tree = self._parser.parse(source_code_bytes)
         self._source_code = source_code_bytes
 
+    def get_language_info(self, node: tree_sitter.Node) -> models.LanguageInfo:
+        if node is None:
+            return
+        language_info = models.LanguageInfo()
+        language_info["language"] = self._language
+        return language_info
+
+    def get_imports_info(self, node: tree_sitter.Node):
+        if node is None:
+            return
+        
+        imports: list = []
+
+        def _parse_import_statement(n) -> list[models.ImportsInfo]:
+            imports: list[models.ImportsInfo] = []
+
+            def collect_dotted_names(node):
+                if node.type == "dotted_name":
+                    module_name = self._source_code[node.start_byte:node.end_byte].decode("utf8")
+                    alias = None
+
+                    parent = node.parent
+                    if parent and parent.type == "aliased_import":
+                        children = parent.children
+                        try:
+                            idx = children.index(node)
+                            # ищем "as" после dotted_name
+                            for i in range(idx + 1, len(children)):
+                                if children[i].type == "as":
+                                    # следующий токен — это алиас (должен быть identifier)
+                                    if i + 1 < len(children) and children[i + 1].type == "identifier":
+                                        alias = self._source_code[children[i + 1].start_byte:children[i + 1].end_byte].decode("utf8")
+                                    break
+                        except ValueError:
+                            pass
+
+                    if alias:
+                        imports.append(models.ImportsInfo(
+                            type="import",
+                            modules=models.ModuleInfo(module=module_name, alias=alias),
+                            names=[]
+                        ))
+                    else:
+                        imports.append(models.ImportsInfo(
+                            type="import",
+                            modules=models.ModuleInfo(module=module_name),
+                            names=[]
+                        ))
+                else:
+                    for child in node.children:
+                        collect_dotted_names(child)
+
+            collect_dotted_names(n)
+            return imports
+
+        def _parse_import_from_statement(n):
+            module_node = n.child_by_field_name("module_name")
+            module_name = self._source_code[module_node.start_byte:module_node.end_byte].decode("utf8") if module_node else ""
+
+            names = []
+            found_import = False
+
+            def extract_name_from_dotted(node):
+                """Извлекает имя из dotted_name (например, 'os.path' -> 'path')."""
+                if node.type == "dotted_name":
+                    identifiers = [child for child in node.children if child.type == "identifier"]
+                    if identifiers:
+                        return self._source_code[identifiers[-1].start_byte:identifiers[-1].end_byte].decode("utf8")
+                elif node.type == "identifier":
+                    return self._source_code[node.start_byte:node.end_byte].decode("utf8")
+                return None
+
+            for child in n.children:
+                if child.type == "import":
+                    found_import = True
+                    continue
+                
+                if found_import:
+                    if child.type == "aliased_import":
+                        name_node = child.child_by_field_name("name")
+                        alias_node = child.child_by_field_name("alias")
+                        name = extract_name_from_dotted(name_node) if name_node else ""
+                        alias = extract_name_from_dotted(alias_node) if alias_node else None
+                        if name:
+                            if alias:
+                                names.append(models.ImportNamesInfo(name=name, alias=alias))
+                            else:
+                                names.append(models.ImportNamesInfo(name=name, alias=""))
+                    
+                    elif child.type == "*":
+                        names.append(models.ImportNamesInfo(name="*", alias=""))
+                    
+                    else:
+                        name = extract_name_from_dotted(child)
+                        if name:
+                            names.append(models.ImportNamesInfo(name=name, alias=""))
+
+            return models.ImportsInfo(
+                type="import_from",
+                modules=models.ModuleInfo(module=module_name),
+                names=names
+            )
+
+        for child in node.children:
+            if child.type == "import_statement":
+                imports.append(_parse_import_statement(child))
+            elif child.type == "import_from_statement":
+                imports.append(_parse_import_from_statement(child))
+
+        return imports
+
+
     def get_code_info(self, node: tree_sitter.Node) -> models.CodeInfo:
         if node is None:
             return
         
+        language_info: models.LanguageInfo
+        imports_info: list[models.ImportsInfo] = []
         classes_info: list[models.ClassInfo] = []
         functions_info: list[models.FunctionInfo] = []
 
@@ -66,14 +181,16 @@ class Filter:
 
         _get_top_level_classes_info(node)
         _get_top_level_functions_info(node)
+        imports_info = self.get_imports_info(node)
+        language_info = self.get_language_info(node)
 
         code_info: models.CodeInfo = {}
+        code_info["language"] = language_info
+        code_info["imports"] = imports_info
         code_info["classes"] = classes_info
         code_info["functions"] = functions_info
 
         return code_info
-        
-        
         
     def get_class_info(self, node: tree_sitter.Node) -> models.ClassInfo:
         if node is None:
@@ -121,8 +238,6 @@ class Filter:
         class_info["functions"] = _extract_class_functions(node)
 
         return class_info
-            
-            
     
     def get_function_info(self, node: tree_sitter.Node) -> models.FunctionInfo:
         if node is None:
@@ -179,7 +294,6 @@ class Filter:
             info["return_type"] = self._source_code[return_type_node.start_byte:return_type_node.end_byte].decode("utf8")
 
         return info
-    
     
     def make_info_in_json_file(self, info: models.CodeInfo, filename: str) -> None:
         with open(filename, "w", encoding="utf8") as f:
