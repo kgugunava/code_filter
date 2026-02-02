@@ -1,7 +1,5 @@
 from typing import TypedDict, List
 
-from tree_sitter_go import language
-
 class LanguageInfo(TypedDict, total=False):
     language: str
 
@@ -24,6 +22,7 @@ class FunctionParameterInfo(TypedDict, total=False):
     default_value: str
 
 class FunctionInfo(TypedDict, total=False):
+    decorators: list[str]
     name: str
     parameters: List[FunctionParameterInfo]
     return_type: str
