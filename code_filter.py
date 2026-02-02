@@ -238,62 +238,6 @@ class Filter:
         class_info["functions"] = _extract_class_functions(node)
 
         return class_info
-    
-    # def get_function_info(self, node: tree_sitter.Node) -> models.FunctionInfo:
-    #     if node is None:
-    #         return {}
-        
-    #     info: models.FunctionInfo = {}
-
-    #     def _extract_function_parameters(n) -> list:
-    #         parameters_node = n.child_by_field_name("parameters")
-
-    #         if not parameters_node:
-    #             return []
-            
-    #         parameters = []
-
-    #         for child in parameters_node.children:
-    #             if child.type in ("(", ")", ","):
-    #                 continue
-    #             param: models.FunctionParameterInfo = {}
-    #             if child.type == "identifier":
-    #                 param["name"] = self._source_code[child.start_byte:child.end_byte].decode("utf8")
-    #             elif child.type == "typed_parameter":
-    #                 name_node = child.child_by_field_name("name") or child.children[0]
-    #                 type_node = child.child_by_field_name("type") or child.children[2]
-    #                 param["name"] = self._source_code[name_node.start_byte:name_node.end_byte].decode("utf8")
-    #                 param["type"] = self._source_code[type_node.start_byte:type_node.end_byte].decode("utf8")
-    #             elif child.type == "default_parameter":
-    #                 name_node = child.child_by_field_name("name") or child.children[0]
-    #                 default_value_node = child.child_by_field_name("value") or child.children[2]
-    #                 param["name"] = self._source_code[name_node.start_byte:name_node.end_byte].decode("utf8")
-    #                 param["default_value"] = self._source_code[default_value_node.start_byte:default_value_node.end_byte].decode("utf8")
-    #             elif child.type == "typed_default_parameter":
-    #                 name_node = child.child_by_field_name("name")
-    #                 type_node = child.child_by_field_name("type")
-    #                 default_value_node = child.child_by_field_name("value")
-    #                 param["name"] = self._source_code[name_node.start_byte:name_node.end_byte].decode("utf8")
-    #                 param["type"] = self._source_code[type_node.start_byte:type_node.end_byte].decode("utf8")                 
-    #                 param["default_value"] = self._source_code[default_value_node.start_byte:default_value_node.end_byte].decode("utf8")
-                
-    #             parameters.append(param)
-
-    #         return parameters  
-        
-    #     name_node = node.child_by_field_name("name")
-
-    #     if name_node:
-    #         name = self._source_code[name_node.start_byte:name_node.end_byte].decode("utf8", errors="ignore")
-    #         info["name"] = name
-    #         info["parameters"] = _extract_function_parameters(node)
-
-    #     return_type_node = node.child_by_field_name("return_type")
-
-    #     if return_type_node:
-    #         info["return_type"] = self._source_code[return_type_node.start_byte:return_type_node.end_byte].decode("utf8")
-
-    #     return info
 
     def get_function_info(self, node: tree_sitter.Node) -> models.FunctionInfo:
         if node is None:
@@ -301,14 +245,11 @@ class Filter:
         
         info: models.FunctionInfo = {}
 
-        # === Извлечение декораторов ===
         decorators = []
         parent = node.parent
-        # Если функция обёрнута в decorated_definition
         if parent and parent.type == "decorated_definition":
             for child in parent.children:
                 if child.type == "decorator":
-                    # Извлекаем текст (например, "@retry" → "retry")
                     decorator_text = self._source_code[child.start_byte:child.end_byte].decode("utf8")
                     if decorator_text.startswith("@"):
                         decorator_text = decorator_text[1:].strip()
@@ -316,7 +257,6 @@ class Filter:
         
         info["decorators"] = decorators
 
-        # === Остальная логика без изменений ===
         def _extract_function_parameters(n) -> list:
             parameters_node = n.child_by_field_name("parameters")
             if not parameters_node:
