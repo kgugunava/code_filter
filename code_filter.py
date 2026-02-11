@@ -2,7 +2,7 @@ import json
 import tree_sitter
 from tree_sitter_go import language
 import constants
-import models
+import filter_models
 
 class Filter:
 
@@ -37,15 +37,26 @@ class Filter:
         self.classes_info = None
         self.functions_info = None
 
-    def create_tree(self, source_code: str) -> None:
+    def create_tree_from_file(self, file_path: str) -> None:
+        """
+        Создаёт AST из файла по указанному пути.
+        """
+        try:
+            with open(file_path, "r", encoding="utf8") as f:
+                source_code = f.read()
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Файл не найден: {file_path}")
+        except UnicodeDecodeError:
+            raise ValueError(f"Не удалось прочитать файл как UTF-8: {file_path}")
+
         source_code_bytes = bytes(source_code, "utf8")
         self._tree = self._parser.parse(source_code_bytes)
         self._source_code = source_code_bytes
 
-    def get_language_info(self, node: tree_sitter.Node) -> models.LanguageInfo:
+    def get_language_info(self, node: tree_sitter.Node) -> filter_models.LanguageInfo:
         if node is None:
             return
-        language_info = models.LanguageInfo()
+        language_info = filter_models.LanguageInfo()
         language_info["language"] = self._language
         return language_info
 
@@ -55,8 +66,8 @@ class Filter:
         
         imports: list = []
 
-        def _parse_import_statement(n) -> list[models.ImportsInfo]:
-            imports: list[models.ImportsInfo] = []
+        def _parse_import_statement(n) -> list[filter_models.ImportsInfo]:
+            imports: list[filter_models.ImportsInfo] = []
 
             def collect_dotted_names(node):
                 if node.type == "dotted_name":
@@ -79,15 +90,15 @@ class Filter:
                             pass
 
                     if alias:
-                        imports.append(models.ImportsInfo(
+                        imports.append(filter_models.ImportsInfo(
                             type="import",
-                            modules=models.ModuleInfo(module=module_name, alias=alias),
+                            modules=filter_models.ModuleInfo(module=module_name, alias=alias),
                             names=[]
                         ))
                     else:
-                        imports.append(models.ImportsInfo(
+                        imports.append(filter_models.ImportsInfo(
                             type="import",
-                            modules=models.ModuleInfo(module=module_name),
+                            modules=filter_models.ModuleInfo(module=module_name),
                             names=[]
                         ))
                 else:
@@ -127,21 +138,21 @@ class Filter:
                         alias = extract_name_from_dotted(alias_node) if alias_node else None
                         if name:
                             if alias:
-                                names.append(models.ImportNamesInfo(name=name, alias=alias))
+                                names.append(filter_models.ImportNamesInfo(name=name, alias=alias))
                             else:
-                                names.append(models.ImportNamesInfo(name=name, alias=""))
+                                names.append(filter_models.ImportNamesInfo(name=name, alias=""))
                     
                     elif child.type == "*":
-                        names.append(models.ImportNamesInfo(name="*", alias=""))
+                        names.append(filter_models.ImportNamesInfo(name="*", alias=""))
                     
                     else:
                         name = extract_name_from_dotted(child)
                         if name:
-                            names.append(models.ImportNamesInfo(name=name, alias=""))
+                            names.append(filter_models.ImportNamesInfo(name=name, alias=""))
 
-            return models.ImportsInfo(
+            return filter_models.ImportsInfo(
                 type="import_from",
-                modules=models.ModuleInfo(module=module_name),
+                modules=filter_models.ModuleInfo(module=module_name),
                 names=names
             )
 
@@ -154,14 +165,14 @@ class Filter:
         return imports
 
 
-    def get_code_info(self, node: tree_sitter.Node) -> models.CodeInfo:
+    def get_code_info(self, node: tree_sitter.Node) -> filter_models.CodeInfo:
         if node is None:
             return
         
-        language_info: models.LanguageInfo
-        imports_info: list[models.ImportsInfo] = []
-        classes_info: list[models.ClassInfo] = []
-        functions_info: list[models.FunctionInfo] = []
+        language_info: filter_models.LanguageInfo
+        imports_info: list[filter_models.ImportsInfo] = []
+        classes_info: list[filter_models.ClassInfo] = []
+        functions_info: list[filter_models.FunctionInfo] = []
 
         def _get_top_level_classes_info(n):
             if n.type == "class_definition":
@@ -184,7 +195,7 @@ class Filter:
         imports_info = self.get_imports_info(node)
         language_info = self.get_language_info(node)
 
-        code_info: models.CodeInfo = {}
+        code_info: filter_models.CodeInfo = {}
         code_info["language"] = language_info
         code_info["imports"] = imports_info
         code_info["classes"] = classes_info
@@ -192,11 +203,11 @@ class Filter:
 
         return code_info
         
-    def get_class_info(self, node: tree_sitter.Node) -> models.ClassInfo:
+    def get_class_info(self, node: tree_sitter.Node) -> filter_models.ClassInfo:
         if node is None:
             return
         
-        class_info: models.ClassInfo = {}
+        class_info: filter_models.ClassInfo = {}
 
         name_node = node.child_by_field_name("name")
         if name_node:
@@ -216,7 +227,7 @@ class Filter:
                     superclasses.append(name)
             return superclasses
         
-        def _extract_class_functions(n) -> list[models.FunctionInfo]:
+        def _extract_class_functions(n) -> list[filter_models.FunctionInfo]:
             functions_info = []
 
             body_node = n.child_by_field_name("body")
@@ -239,11 +250,11 @@ class Filter:
 
         return class_info
 
-    def get_function_info(self, node: tree_sitter.Node) -> models.FunctionInfo:
+    def get_function_info(self, node: tree_sitter.Node) -> filter_models.FunctionInfo:
         if node is None:
             return {}
         
-        info: models.FunctionInfo = {}
+        info: filter_models.FunctionInfo = {}
 
         decorators = []
         parent = node.parent
@@ -266,7 +277,7 @@ class Filter:
             for child in parameters_node.children:
                 if child.type in ("(", ")", ","):
                     continue
-                param: models.FunctionParameterInfo = {}
+                param: filter_models.FunctionParameterInfo = {}
                 if child.type == "identifier":
                     param["name"] = self._source_code[child.start_byte:child.end_byte].decode("utf8")
                 elif child.type == "typed_parameter":
@@ -303,6 +314,71 @@ class Filter:
 
         return info
     
-    def make_info_in_json_file(self, info: models.CodeInfo, filename: str) -> None:
+    def extract_context(self, file_path: str) -> dict:
+        """
+        Анализирует файл и возвращает плоский контекст для поиска.
+        Безопасно обрабатывает отсутствующие ключи.
+        """
+        self.create_tree_from_file(file_path)
+        info = self.get_code_info(self._tree.root_node)
+
+        # 1. Язык
+        language = info.get("language", {}).get("language", "unknown").strip()
+
+        # 2. Импорты — собираем все имена
+        imports = set()
+        imports_list = info.get("imports", [])
+
+        for imp_group in imports_list:
+            # Обработка случая, когда элемент — список (из-за ошибки с append/extend)
+            if isinstance(imp_group, list):
+                for imp in imp_group:
+                    self._collect_imports_from_item_safe(imp, imports)
+            else:
+                self._collect_imports_from_item_safe(imp_group, imports)
+
+        # 3. Классы
+        classes = []
+        for cls in info.get("classes", []):
+            name = cls.get("name", "").strip()
+            if name:
+                classes.append(name)
+
+        # 4. Функции верхнего уровня
+        functions = []
+        for fn in info.get("functions", []):
+            name = fn.get("name", "").strip()
+            if name:
+                functions.append(name)
+
+        return {
+            "language": language,
+            "imports": sorted(imports),
+            "classes": classes,
+            "functions": functions,
+        }
+
+    def _collect_imports_from_item_safe(self, imp_item, imports_set):
+        """Безопасное извлечение имён из одного элемента импорта."""
+        if not isinstance(imp_item, dict):
+            return
+
+        imp_type = imp_item.get("type", "")
+        
+        if imp_type == "import":
+            modules = imp_item.get("modules", {})
+            module = modules.get("module", "").strip()
+            if module:
+                imports_set.add(module)
+
+        elif imp_type == "import_from":
+            names_list = imp_item.get("names", [])
+            for name_info in names_list:
+                if isinstance(name_info, dict):
+                    name = name_info.get("name", "").strip()
+                    if name and name != "*":
+                        imports_set.add(name)
+
+    def make_info_in_json_file(self, info: filter_models.CodeInfo, filename: str) -> None:
         with open(filename, "w", encoding="utf8") as f:
             json.dump(info, f, ensure_ascii=False, indent=2)
